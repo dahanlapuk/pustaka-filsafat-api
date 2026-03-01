@@ -31,7 +31,6 @@ func main() {
 
 	app.Use(middleware.AdminAuth(DB))
 	SetupRoutes(app)
-
 	log.Println("🚀 Server running on http://0.0.0.0:3000")
 	log.Fatal(app.Listen("0.0.0.0:3000"))
 }
