@@ -1,0 +1,22 @@
+# Binary
+server
+*.exe
+
+# Environment
+.env
+.env.local
+
+# Logs
+nohup.out
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Test coverage
+coverage.out
+
+# Scripts with sensitive data
+scripts/set_passwords.go
