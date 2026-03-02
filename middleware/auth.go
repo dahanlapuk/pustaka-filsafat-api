@@ -17,6 +17,7 @@ const SessionDuration = 10 * time.Hour
 func AdminAuth(db *sql.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		fmt.Println("AUTH PATH:", c.Path())
+		fmt.Println("IS PUBLIC:", isPublicRoute(c))
 		// ===== PUBLIC ROUTE CHECK (FIRST) =====
 		if isPublicRoute(c) {
 			return c.Next()
