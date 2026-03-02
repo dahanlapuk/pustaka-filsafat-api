@@ -88,13 +88,21 @@ func isPublicRoute(c *fiber.Ctx) bool {
 		return true
 	}
 
+	// --- LOGIN & ADMIN LIST (PUBLIC)
+	if path == "/api/admins/login" && method == fiber.MethodPost {
+		return true
+	}
+
+	if path == "/api/admins" && method == fiber.MethodGet {
+		return true
+	}
+
 	// --- PUBLIC GET endpoints (catalog access)
 	if method == fiber.MethodGet {
 		publicGetPrefixes := []string{
 			"/api/books",
 			"/api/categories",
 			"/api/posisi",
-			"/api/admins",
 		}
 
 		for _, p := range publicGetPrefixes {
