@@ -3,6 +3,7 @@ package middleware
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -42,17 +43,27 @@ func AdminAuth(db *sql.DB) fiber.Handler {
 			})
 		}
 
-		// ===== VALIDATE SESSION TIME =====
+		// Validate session time
 		if sessionStart != "" {
 			sessionTime, err := strconv.ParseInt(sessionStart, 10, 64)
 			if err == nil {
 				elapsed := time.Now().UnixMilli() - sessionTime
+
+				log.Println("SESSION DEBUG → start:", sessionTime)
+				log.Println("SESSION DEBUG → now:", time.Now().UnixMilli())
+				log.Println("SESSION DEBUG → elapsed(ms):", elapsed)
+				log.Println("SESSION DEBUG → limit(ms):", SessionDuration.Milliseconds())
+
 				if elapsed > SessionDuration.Milliseconds() {
-					return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+					return c.Status(401).JSON(fiber.Map{
 						"error": "Session expired - silakan login kembali",
 					})
 				}
+			} else {
+				log.Println("SESSION DEBUG → parse error:", err)
 			}
+		} else {
+			log.Println("SESSION DEBUG → sessionStart header kosong")
 		}
 
 		// ===== VERIFY ADMIN EXISTS =====
