@@ -54,10 +54,13 @@ func AdminAuth(db *sql.DB) fiber.Handler {
 
 		// ===== VERIFY ADMIN EXISTS =====
 		var exists bool
-		err = db.QueryRow(
-			"SELECT EXISTS(SELECT 1 FROM admins WHERE id = $1)",
-			adminID,
-		).Scan(&exists)
+		err = db.QueryRow(`
+    SELECT EXISTS(
+        SELECT 1 FROM users 
+        WHERE id = $1
+        AND role IN ('magang','kaprodi','admin')
+    )
+`, adminID).Scan(&exists)
 
 		if err != nil || !exists {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
