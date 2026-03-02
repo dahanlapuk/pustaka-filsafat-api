@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"database/sql"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ const SessionDuration = 10 * time.Hour
 // AdminAuth middleware - validates admin session from header
 func AdminAuth(db *sql.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		fmt.Println("AUTH PATH:", c.Path())
 		// ===== PUBLIC ROUTE CHECK (FIRST) =====
 		if isPublicRoute(c) {
 			return c.Next()
