@@ -15,73 +15,86 @@ const SessionDuration = 10 * time.Hour
 // AdminAuth middleware - validates admin session from header
 func AdminAuth(db *sql.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		// Get admin ID from header
-		adminIDStr := c.Get("X-Admin-ID")
-		sessionStart := c.Get("X-Session-Start")
-
-		// Skip auth for public routes
-		path := c.Path()
-		if isPublicRoute(path) {
+		// ===== PUBLIC ROUTE CHECK (FIRST) =====
+		if isPublicRoute(c) {
 			return c.Next()
 		}
 
-		// Check if headers exist
+		// ===== GET HEADERS =====
+		adminIDStr := c.Get("X-Admin-ID")
+		sessionStart := c.Get("X-Session-Start")
+
+		// ===== HEADER REQUIRED =====
 		if adminIDStr == "" {
-			return c.Status(401).JSON(fiber.Map{
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 				"error": "Unauthorized - silakan login terlebih dahulu",
 			})
 		}
 
-		// Validate admin ID
+		// ===== VALIDATE ADMIN ID =====
 		adminID, err := strconv.Atoi(adminIDStr)
 		if err != nil || adminID <= 0 {
-			return c.Status(401).JSON(fiber.Map{
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 				"error": "Invalid admin session",
 			})
 		}
 
-		// Validate session time
+		// ===== VALIDATE SESSION TIME =====
 		if sessionStart != "" {
 			sessionTime, err := strconv.ParseInt(sessionStart, 10, 64)
 			if err == nil {
 				elapsed := time.Now().UnixMilli() - sessionTime
 				if elapsed > SessionDuration.Milliseconds() {
-					return c.Status(401).JSON(fiber.Map{
+					return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 						"error": "Session expired - silakan login kembali",
 					})
 				}
 			}
 		}
 
-		// Verify admin exists in database
+		// ===== VERIFY ADMIN EXISTS =====
 		var exists bool
-		err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM admins WHERE id = $1)", adminID).Scan(&exists)
+		err = db.QueryRow(
+			"SELECT EXISTS(SELECT 1 FROM admins WHERE id = $1)",
+			adminID,
+		).Scan(&exists)
+
 		if err != nil || !exists {
-			return c.Status(401).JSON(fiber.Map{
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 				"error": "Admin tidak ditemukan",
 			})
 		}
 
-		// Store admin ID in context for handlers to use
+		// ===== STORE IN CONTEXT =====
 		c.Locals("adminID", adminID)
 
 		return c.Next()
 	}
 }
 
-// isPublicRoute checks if route should skip auth
-func isPublicRoute(path string) bool {
-	publicPaths := []string{
-		"/health",
-		"/api/books",      // GET only - read public catalog
-		"/api/categories", // GET only - read categories
-		"/api/posisi",     // GET only - read positions
-		"/api/admins",     // GET only - list admins for login
+// isPublicRoute determines which endpoints are public
+func isPublicRoute(c *fiber.Ctx) bool {
+	path := c.Path()
+	method := c.Method()
+
+	// --- health always public
+	if path == "/health" {
+		return true
 	}
 
-	for _, p := range publicPaths {
-		if strings.HasPrefix(path, p) {
-			return true
+	// --- PUBLIC GET endpoints (catalog access)
+	if method == fiber.MethodGet {
+		publicGetPrefixes := []string{
+			"/api/books",
+			"/api/categories",
+			"/api/posisi",
+			"/api/admins",
+		}
+
+		for _, p := range publicGetPrefixes {
+			if strings.HasPrefix(path, p) {
+				return true
+			}
 		}
 	}
 
