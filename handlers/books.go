@@ -16,82 +16,56 @@ func SetDB(db *sql.DB) {
 	DB = db
 }
 
-// GetBooks - GET /api/books
+// GetBooks - GET /api/books?page=1&limit=20
 func GetBooks(c *fiber.Ctx) error {
-	// Query params for filtering
 	kategoriID := c.Query("kategori_id")
-	posisiID := c.Query("posisi_id")
-	status := c.Query("status") // "dipinjam" or "tersedia"
+	posisiID   := c.Query("posisi_id")
+	status     := c.Query("status")
 
-	query := `
-		SELECT 
-			b.id, b.kode, b.judul, b.kategori_id, b.posisi_id, b.qty, b.keterangan, b.created_at, b.updated_at,
-			c.nama as kategori_nama,
-			p.kode as posisi_kode, p.rak as posisi_rak,
-			CASE WHEN l.id IS NOT NULL THEN true ELSE false END as is_dipinjam,
-			l.nama_peminjam as peminjam
-		FROM books b
-		LEFT JOIN categories c ON b.kategori_id = c.id
-		LEFT JOIN posisi p ON b.posisi_id = p.id
-		LEFT JOIN loans l ON b.id = l.book_id AND l.tanggal_kembali IS NULL
-		WHERE 1=1
-	`
-	args := []interface{}{}
-	argIdx := 1
+	// Pagination
+	page  := c.QueryInt("page", 1)
+	limit := c.QueryInt("limit", 20)
+	if page  < 1 { page  = 1 }
+	if limit < 1 { limit = 10 }
+	if limit > 200 { limit = 200 }
+	offset := (page - 1) * limit
+
+	baseWhere := " WHERE 1=1"
+	args      := []interface{}{}
+	argIdx    := 1
 
 	if kategoriID != "" {
-		query += " AND b.kategori_id = $" + strconv.Itoa(argIdx)
+		baseWhere += " AND b.kategori_id = $" + strconv.Itoa(argIdx)
 		args = append(args, kategoriID)
 		argIdx++
 	}
-
 	if posisiID != "" {
-		query += " AND b.posisi_id = $" + strconv.Itoa(argIdx)
+		baseWhere += " AND b.posisi_id = $" + strconv.Itoa(argIdx)
 		args = append(args, posisiID)
 		argIdx++
 	}
-
 	if status == "dipinjam" {
-		query += " AND l.id IS NOT NULL"
+		baseWhere += " AND l.id IS NOT NULL"
 	} else if status == "tersedia" {
-		query += " AND l.id IS NULL"
+		baseWhere += " AND l.id IS NULL"
 	}
 
-	query += " ORDER BY b.judul ASC"
+	countQuery := `
+		SELECT COUNT(*)
+		FROM books b
+		LEFT JOIN categories c ON b.kategori_id = c.id
+		LEFT JOIN posisi p     ON b.posisi_id    = p.id
+		LEFT JOIN loans l      ON b.id = l.book_id AND l.tanggal_kembali IS NULL
+	` + baseWhere
 
-	rows, err := DB.Query(query, args...)
-	if err != nil {
+	var total int
+	if err := DB.QueryRow(countQuery, args...).Scan(&total); err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	defer rows.Close()
+	totalPages := (total + limit - 1) / limit
 
-	books := []models.Book{}
-	for rows.Next() {
-		var b models.Book
-		err := rows.Scan(
-			&b.ID, &b.Kode, &b.Judul, &b.KategoriID, &b.PosisiID, &b.Qty, &b.Keterangan, &b.CreatedAt, &b.UpdatedAt,
-			&b.KategoriNama, &b.PosisiKode, &b.PosisiRak, &b.IsDipinjam, &b.Peminjam,
-		)
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-		}
-		books = append(books, b)
-	}
-
-	return c.JSON(books)
-}
-
-// SearchBooks - GET /api/books/search?q=keyword
-func SearchBooks(c *fiber.Ctx) error {
-	q := c.Query("q")
-	if q == "" {
-		return c.JSON([]models.Book{})
-	}
-
-	searchTerm := "%" + q + "%"
-
-	query := `
-		SELECT 
+	dataQuery := `
+		SELECT
 			b.id, b.kode, b.judul, b.kategori_id, b.posisi_id, b.qty, b.keterangan, b.created_at, b.updated_at,
 			c.nama as kategori_nama,
 			p.kode as posisi_kode, p.rak as posisi_rak,
@@ -99,13 +73,13 @@ func SearchBooks(c *fiber.Ctx) error {
 			l.nama_peminjam as peminjam
 		FROM books b
 		LEFT JOIN categories c ON b.kategori_id = c.id
-		LEFT JOIN posisi p ON b.posisi_id = p.id
-		LEFT JOIN loans l ON b.id = l.book_id AND l.tanggal_kembali IS NULL
-		WHERE b.judul ILIKE $1 OR b.kode ILIKE $1 OR b.keterangan ILIKE $1 OR c.nama ILIKE $1
-		ORDER BY b.judul ASC
-	`
+		LEFT JOIN posisi p     ON b.posisi_id    = p.id
+		LEFT JOIN loans l      ON b.id = l.book_id AND l.tanggal_kembali IS NULL
+	` + baseWhere + " ORDER BY b.judul ASC"
+	dataQuery += " LIMIT $" + strconv.Itoa(argIdx) + " OFFSET $" + strconv.Itoa(argIdx+1)
+	args = append(args, limit, offset)
 
-	rows, err := DB.Query(query, searchTerm)
+	rows, err := DB.Query(dataQuery, args...)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -114,18 +88,88 @@ func SearchBooks(c *fiber.Ctx) error {
 	books := []models.Book{}
 	for rows.Next() {
 		var b models.Book
-		err := rows.Scan(
+		if err := rows.Scan(
 			&b.ID, &b.Kode, &b.Judul, &b.KategoriID, &b.PosisiID, &b.Qty, &b.Keterangan, &b.CreatedAt, &b.UpdatedAt,
 			&b.KategoriNama, &b.PosisiKode, &b.PosisiRak, &b.IsDipinjam, &b.Peminjam,
-		)
-		if err != nil {
+		); err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 		}
 		books = append(books, b)
 	}
 
-	return c.JSON(books)
+	return c.JSON(fiber.Map{
+		"data":        books,
+		"total":       total,
+		"page":        page,
+		"limit":       limit,
+		"total_pages": totalPages,
+	})
 }
+
+// SearchBooks - GET /api/books/search?q=keyword&page=1&limit=20
+func SearchBooks(c *fiber.Ctx) error {
+	q := c.Query("q")
+	if q == "" {
+		return c.JSON(fiber.Map{"data": []models.Book{}, "total": 0, "page": 1, "limit": 20, "total_pages": 0})
+	}
+
+	page  := c.QueryInt("page", 1)
+	limit := c.QueryInt("limit", 20)
+	if page  < 1 { page  = 1 }
+	if limit < 1 { limit = 10 }
+	if limit > 200 { limit = 200 }
+	offset := (page - 1) * limit
+	searchTerm := "%" + q + "%"
+
+	var total int
+	DB.QueryRow(`
+		SELECT COUNT(*) FROM books b
+		LEFT JOIN categories c ON b.kategori_id = c.id
+		WHERE b.judul ILIKE $1 OR b.kode ILIKE $1 OR b.keterangan ILIKE $1 OR c.nama ILIKE $1
+	`, searchTerm).Scan(&total)
+	totalPages := (total + limit - 1) / limit
+
+	rows, err := DB.Query(`
+		SELECT
+			b.id, b.kode, b.judul, b.kategori_id, b.posisi_id, b.qty, b.keterangan, b.created_at, b.updated_at,
+			c.nama as kategori_nama,
+			p.kode as posisi_kode, p.rak as posisi_rak,
+			CASE WHEN l.id IS NOT NULL THEN true ELSE false END as is_dipinjam,
+			l.nama_peminjam as peminjam
+		FROM books b
+		LEFT JOIN categories c ON b.kategori_id = c.id
+		LEFT JOIN posisi p     ON b.posisi_id    = p.id
+		LEFT JOIN loans l      ON b.id = l.book_id AND l.tanggal_kembali IS NULL
+		WHERE b.judul ILIKE $1 OR b.kode ILIKE $1 OR b.keterangan ILIKE $1 OR c.nama ILIKE $1
+		ORDER BY b.judul ASC
+		LIMIT $2 OFFSET $3
+	`, searchTerm, limit, offset)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	defer rows.Close()
+
+	books := []models.Book{}
+	for rows.Next() {
+		var b models.Book
+		if err := rows.Scan(
+			&b.ID, &b.Kode, &b.Judul, &b.KategoriID, &b.PosisiID, &b.Qty, &b.Keterangan, &b.CreatedAt, &b.UpdatedAt,
+			&b.KategoriNama, &b.PosisiKode, &b.PosisiRak, &b.IsDipinjam, &b.Peminjam,
+		); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		books = append(books, b)
+	}
+
+	return c.JSON(fiber.Map{
+		"data":        books,
+		"total":       total,
+		"page":        page,
+		"limit":       limit,
+		"total_pages": totalPages,
+	})
+}
+
 
 // GetBook - GET /api/books/:id
 func GetBook(c *fiber.Ctx) error {

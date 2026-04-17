@@ -123,5 +123,10 @@ func isPublicRoute(c *fiber.Ctx) bool {
 		}
 	}
 
+	// --- PUBLIC POST endpoints (pengajuan peminjaman)
+	if method == fiber.MethodPost && path == "/api/loan-requests" {
+		return true
+	}
+
 	return false
 }
