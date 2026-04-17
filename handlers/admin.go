@@ -119,6 +119,10 @@ func GetCurrentAdmin(db *sql.DB) fiber.Handler {
 // LoginAdmin - login with password
 func LoginAdmin(db *sql.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		if err := EnsureAuthSessionSchema(db); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Sistem sesi belum siap. Silakan coba lagi."})
+		}
+
 		var input models.AdminLoginInput
 		if err := c.BodyParser(&input); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "Input tidak valid"})

@@ -19,6 +19,9 @@ func main() {
 
 	ConnectDB()
 	handlers.SetDB(DB)
+	if err := handlers.EnsureAuthSessionSchema(DB); err != nil {
+		log.Fatal(err)
+	}
 
 	app := fiber.New(fiber.Config{
 		AppName: "Pustaka Filsafat API",
