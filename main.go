@@ -29,8 +29,9 @@ func main() {
 
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",
-		AllowHeaders: "Origin, Content-Type, Accept, Authorization, X-Session-Token",
-		AllowMethods: "GET, POST, PUT, DELETE",
+		// Keep legacy headers during transition so old frontend builds don't fail preflight.
+		AllowHeaders: "Origin, Content-Type, Accept, Authorization, X-Session-Token, X-Admin-ID, X-Session-Start",
+		AllowMethods: "GET, POST, PUT, DELETE, OPTIONS",
 	}))
 
 	app.Use(middleware.AdminAuth(DB))
