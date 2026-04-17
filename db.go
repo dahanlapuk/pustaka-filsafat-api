@@ -12,9 +12,13 @@ import (
 var DB *sql.DB
 
 func ConnectDB() {
+	// Support DB_URL (lokal/.env) dan DATABASE_URL (Railway/Render standar)
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		log.Fatal("DATABASE_URL is not set")
+		dsn = os.Getenv("DB_URL")
+	}
+	if dsn == "" {
+		log.Fatal("DATABASE_URL atau DB_URL tidak ditemukan di environment")
 	}
 
 	db, err := sql.Open("postgres", dsn)

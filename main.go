@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"os"
 
 	"pustaka-filsafat/handlers"
 	"pustaka-filsafat/middleware"
@@ -31,6 +32,12 @@ func main() {
 
 	app.Use(middleware.AdminAuth(DB))
 	SetupRoutes(app)
-	log.Println("🚀 Server running on http://0.0.0.0:3000")
-	log.Fatal(app.Listen("0.0.0.0:3000"))
+
+	// Railway/Render assign PORT dinamis; lokal default 3000
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "3000"
+	}
+	log.Printf("🚀 Server running on port %s", port)
+	log.Fatal(app.Listen("0.0.0.0:" + port))
 }
