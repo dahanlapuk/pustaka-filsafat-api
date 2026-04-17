@@ -81,6 +81,33 @@ Server berjalan di `http://localhost:3000`
 - `PUT /api/admins/:id/profile` - Update profil
 - `PUT /api/admins/:id/password` - Ganti password
 
+## Auth Session Flow
+
+Protected endpoint memakai header berikut:
+
+- `X-Session-Token: <token_dari_login>`
+
+Perilaku sesi:
+
+- Saat login berhasil, backend membuat sesi baru dengan durasi tetap 10 jam (`issued_at + 10 jam`).
+- Jika admin login ulang, sesi sebelumnya otomatis dinonaktifkan (single-session policy).
+- Jika token sudah expired atau logout, token tidak bisa dipakai lagi.
+
+Contoh response login:
+
+```json
+{
+	"message": "Login berhasil",
+	"session_token": "<token>",
+	"session_started_at": "2026-04-17T08:00:00Z",
+	"session_expires_at": "2026-04-17T18:00:00Z",
+	"admin": {
+		"id": 1,
+		"nama": "Admin"
+	}
+}
+```
+
 ### Activity Logs
 - `GET /api/logs` - List log aktivitas
 - `GET /api/logs/stats` - Statistik log

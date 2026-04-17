@@ -1,10 +1,9 @@
 package middleware
 
 import (
+	"crypto/sha256"
 	"database/sql"
-	"fmt"
-	"log"
-	"strconv"
+	"encoding/hex"
 	"strings"
 	"time"
 
@@ -14,76 +13,65 @@ import (
 // Session duration - 10 hours
 const SessionDuration = 10 * time.Hour
 
+func hashSessionToken(rawToken string) string {
+	sum := sha256.Sum256([]byte(rawToken))
+	return hex.EncodeToString(sum[:])
+}
+
 // AdminAuth middleware - validates admin session from header
 func AdminAuth(db *sql.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		fmt.Println("AUTH PATH:", c.Path())
-		fmt.Println("IS PUBLIC:", isPublicRoute(c))
-		// ===== PUBLIC ROUTE CHECK (FIRST) =====
+		// Public routes bypass auth middleware.
 		if isPublicRoute(c) {
 			return c.Next()
 		}
 
-		// ===== GET HEADERS =====
-		adminIDStr := c.Get("X-Admin-ID")
-		sessionStart := c.Get("X-Session-Start")
-
-		// ===== HEADER REQUIRED =====
-		if adminIDStr == "" {
+		sessionToken := strings.TrimSpace(c.Get("X-Session-Token"))
+		if sessionToken == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error": "Unauthorized - silakan login terlebih dahulu",
+				"error": "Unauthorized - session token diperlukan",
 			})
 		}
 
-		// ===== VALIDATE ADMIN ID =====
-		adminID, err := strconv.Atoi(adminIDStr)
-		if err != nil || adminID <= 0 {
+		tokenHash := hashSessionToken(sessionToken)
+
+		var adminID int
+		var expiresAt time.Time
+		err := db.QueryRow(`
+			SELECT s.admin_id, s.expires_at
+			FROM admin_sessions s
+			JOIN admins a ON a.id = s.admin_id
+			WHERE s.token_hash = $1 AND s.invalidated_at IS NULL
+			LIMIT 1
+		`, tokenHash).Scan(&adminID, &expiresAt)
+
+		if err == sql.ErrNoRows {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error": "Invalid admin session",
+				"error": "Invalid session - silakan login kembali",
+			})
+		}
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Gagal memvalidasi sesi",
 			})
 		}
 
-		// Validate session time
-		if sessionStart != "" {
-			sessionTime, err := strconv.ParseInt(sessionStart, 10, 64)
-			if err == nil {
-				elapsed := time.Now().UnixMilli() - sessionTime
+		now := time.Now().UTC()
+		if now.After(expiresAt.UTC()) {
+			_, _ = db.Exec(`
+				UPDATE admin_sessions
+				SET invalidated_at = NOW()
+				WHERE token_hash = $1 AND invalidated_at IS NULL
+			`, tokenHash)
 
-				log.Println("SESSION DEBUG → start:", sessionTime)
-				log.Println("SESSION DEBUG → now:", time.Now().UnixMilli())
-				log.Println("SESSION DEBUG → elapsed(ms):", elapsed)
-				log.Println("SESSION DEBUG → limit(ms):", SessionDuration.Milliseconds())
-
-				if elapsed > SessionDuration.Milliseconds() {
-					return c.Status(401).JSON(fiber.Map{
-						"error": "Session expired - silakan login kembali",
-					})
-				}
-			} else {
-				log.Println("SESSION DEBUG → parse error:", err)
-			}
-		} else {
-			log.Println("SESSION DEBUG → sessionStart header kosong")
-		}
-
-		// ===== VERIFY ADMIN EXISTS =====
-		var exists bool
-		err = db.QueryRow(`
-    SELECT EXISTS(
-        SELECT 1 FROM users 
-        WHERE id = $1
-        AND role IN ('magang','kaprodi','admin')
-    )
-`, adminID).Scan(&exists)
-
-		if err != nil || !exists {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error": "Admin tidak ditemukan",
+				"error": "Session expired - silakan login kembali",
 			})
 		}
 
-		// ===== STORE IN CONTEXT =====
+		// Store admin identity derived from session.
 		c.Locals("adminID", adminID)
+		c.Locals("sessionTokenHash", tokenHash)
 
 		return c.Next()
 	}

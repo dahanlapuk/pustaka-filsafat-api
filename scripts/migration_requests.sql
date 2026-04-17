@@ -36,3 +36,20 @@ CREATE INDEX IF NOT EXISTS idx_loan_requests_status ON loan_requests(status);
 CREATE INDEX IF NOT EXISTS idx_loan_requests_book ON loan_requests(book_id);
 CREATE INDEX IF NOT EXISTS idx_delete_requests_status ON delete_requests(status);
 CREATE INDEX IF NOT EXISTS idx_delete_requests_book ON delete_requests(book_id);
+
+-- Tabel sesi admin untuk auth token-based (single-session)
+CREATE TABLE IF NOT EXISTS admin_sessions (
+    id BIGSERIAL PRIMARY KEY,
+    admin_id INT NOT NULL REFERENCES admins(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    issued_at TIMESTAMP NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    invalidated_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_sessions_admin_active
+    ON admin_sessions(admin_id, invalidated_at);
+
+CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires_at
+    ON admin_sessions(expires_at);

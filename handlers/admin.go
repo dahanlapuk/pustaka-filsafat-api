@@ -1,8 +1,12 @@
 package handlers
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
+	"fmt"
 	"pustaka-filsafat/models"
 	"time"
 
@@ -12,6 +16,22 @@ import (
 
 // Password expiry duration - 6 months
 const PasswordExpiryDuration = 6 * 30 * 24 * time.Hour // ~6 months
+
+// Session expiry duration - 10 hours
+const SessionExpiryDuration = 10 * time.Hour
+
+func generateSessionToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func hashSessionToken(rawToken string) string {
+	sum := sha256.Sum256([]byte(rawToken))
+	return hex.EncodeToString(sum[:])
+}
 
 // decodePassword - decode Base64 encoded password from frontend
 func decodePassword(encoded string) (string, error) {
@@ -143,8 +163,38 @@ func LoginAdmin(db *sql.DB) fiber.Handler {
 		// Log successful login
 		LogActivity(db, &admin.ID, admin.Nama, models.ActionLogin, models.EntityAdmin, &admin.ID, &admin.Nama, nil)
 
+		issuedAt := time.Now().UTC()
+		expiresAt := issuedAt.Add(SessionExpiryDuration)
+
+		token, err := generateSessionToken()
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Gagal membuat sesi login"})
+		}
+		tokenHash := hashSessionToken(token)
+
+		// Single-session policy: login baru menonaktifkan sesi aktif sebelumnya.
+		_, err = db.Exec(`
+			UPDATE admin_sessions
+			SET invalidated_at = NOW()
+			WHERE admin_id = $1 AND invalidated_at IS NULL
+		`, admin.ID)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Gagal memperbarui sesi aktif"})
+		}
+
+		_, err = db.Exec(`
+			INSERT INTO admin_sessions (admin_id, token_hash, issued_at, expires_at)
+			VALUES ($1, $2, $3, $4)
+		`, admin.ID, tokenHash, issuedAt, expiresAt)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Gagal menyimpan sesi login"})
+		}
+
 		return c.JSON(fiber.Map{
-			"message": "Login berhasil",
+			"message":            "Login berhasil",
+			"session_token":      token,
+			"session_started_at": issuedAt,
+			"session_expires_at": expiresAt,
 			"admin": fiber.Map{
 				"id":                  admin.ID,
 				"nama":                admin.Nama,
@@ -271,16 +321,53 @@ func ChangePassword(db *sql.DB) fiber.Handler {
 // LogoutAdmin - logout and log activity
 func LogoutAdmin(db *sql.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		sessionToken := c.Get("X-Session-Token")
+		if sessionToken == "" {
+			return c.Status(401).JSON(fiber.Map{"error": "Session token diperlukan"})
+		}
+
 		var input struct {
 			AdminID int    `json:"admin_id"`
 			Nama    string `json:"nama"`
 		}
-		if err := c.BodyParser(&input); err != nil || input.AdminID == 0 {
-			return c.Status(400).JSON(fiber.Map{"error": "admin_id diperlukan"})
+		if len(c.Body()) > 0 {
+			if err := c.BodyParser(&input); err != nil {
+				return c.Status(400).JSON(fiber.Map{"error": "Input logout tidak valid"})
+			}
+		}
+
+		tokenHash := hashSessionToken(sessionToken)
+		result, err := db.Exec(`
+			UPDATE admin_sessions
+			SET invalidated_at = NOW()
+			WHERE token_hash = $1 AND invalidated_at IS NULL
+		`, tokenHash)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Gagal logout"})
+		}
+
+		rowsAffected, _ := result.RowsAffected()
+		if rowsAffected == 0 {
+			return c.Status(401).JSON(fiber.Map{"error": "Session tidak valid atau sudah logout"})
+		}
+
+		adminIDVal := c.Locals("adminID")
+		adminID, ok := adminIDVal.(int)
+		if !ok || adminID == 0 {
+			return c.Status(401).JSON(fiber.Map{"error": "Session admin tidak valid"})
+		}
+
+		adminNama := input.Nama
+		if adminNama == "" {
+			_ = db.QueryRow(`SELECT nama FROM admins WHERE id = $1`, adminID).Scan(&adminNama)
 		}
 
 		// Log logout
-		LogActivity(db, &input.AdminID, input.Nama, models.ActionLogout, models.EntityAdmin, &input.AdminID, &input.Nama, nil)
+		entityName := fmt.Sprintf("admin-%d", adminID)
+		if adminNama != "" {
+			entityName = adminNama
+		}
+		LogActivity(db, &adminID, adminNama, models.ActionLogout, models.EntityAdmin, &adminID, &entityName, nil)
 
 		return c.JSON(fiber.Map{
 			"message": "Logout berhasil",
