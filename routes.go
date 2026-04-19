@@ -79,6 +79,7 @@ func SetupRoutes(app *fiber.App) {
 	api.Delete("/admins/:id", handlers.DeleteAdmin(DB))
 	api.Put("/admins/:id/profile", handlers.UpdateProfile(DB))
 	api.Put("/admins/:id/password", handlers.ChangePassword(DB))
+	api.Put("/admins/:id/reset-password", handlers.ResetPasswordBySuper(DB))
 
 	// ── Activity Logs ────────────────────────────────────────
 	api.Get("/logs", handlers.GetActivityLogs(DB))

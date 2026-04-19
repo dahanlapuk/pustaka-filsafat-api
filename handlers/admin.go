@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"pustaka-filsafat/models"
+	"strconv"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -338,6 +339,83 @@ func ChangePassword(db *sql.DB) fiber.Handler {
 
 		return c.JSON(fiber.Map{
 			"message": "Password berhasil diubah",
+		})
+	}
+}
+
+// ResetPasswordBySuper - reset admin password (superadmin only, untuk recover password yang corrupt akibat mismatch encoding)
+func ResetPasswordBySuper(db *sql.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		admin, err := getSessionAdmin(db, c)
+		if err != nil {
+			return c.Status(401).JSON(fiber.Map{"error": "Session admin tidak valid"})
+		}
+		if !admin.IsSuperadmin {
+			return c.Status(403).JSON(fiber.Map{"error": "Hanya superadmin yang bisa reset password"})
+		}
+
+		targetID := c.Params("id")
+		if targetID == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "ID admin diperlukan"})
+		}
+
+		var input struct {
+			NewPassword string `json:"new_password"`
+		}
+		if err := c.BodyParser(&input); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "Input tidak valid"})
+		}
+
+		if input.NewPassword == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "Password baru diperlukan"})
+		}
+
+		decodedPassword, _ := decodePassword(input.NewPassword)
+		if len(decodedPassword) < 6 {
+			return c.Status(400).JSON(fiber.Map{"error": "Password minimal 6 karakter"})
+		}
+
+		// Get target admin info
+		var targetNama string
+		var targetIsSuper bool
+		err = db.QueryRow(`SELECT nama, is_superadmin FROM admins WHERE id = $1`, targetID).Scan(&targetNama, &targetIsSuper)
+		if err == sql.ErrNoRows {
+			return c.Status(404).JSON(fiber.Map{"error": "Admin tidak ditemukan"})
+		}
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Gagal mengambil data admin"})
+		}
+
+		// Prevent changing own password dari endpoint ini (use /admins/:id/password instead)
+		if targetID == fmt.Sprintf("%d", admin.ID) {
+			return c.Status(400).JSON(fiber.Map{"error": "Gunakan endpoint change password untuk mengubah password sendiri"})
+		}
+
+		// Hash new password
+		newHash, err := bcrypt.GenerateFromPassword([]byte(decodedPassword), bcrypt.DefaultCost)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Gagal memproses password"})
+		}
+
+		// Update password
+		_, err = db.Exec(`
+			UPDATE admins SET password_hash = $1, password_changed_at = NOW() WHERE id = $2
+		`, string(newHash), targetID)
+
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Gagal reset password"})
+		}
+
+		// Log activity
+		targetIDInt, _ := strconv.Atoi(targetID)
+		LogActivity(db, &admin.ID, admin.Nama, "RESET_PASSWORD", models.EntityAdmin, &targetIDInt, &targetNama, fiber.Map{
+			"reset_by": admin.Nama,
+		})
+
+		return c.JSON(fiber.Map{
+			"message": "Password admin berhasil direset",
+			"admin_id": targetIDInt,
+			"admin_nama": targetNama,
 		})
 	}
 }
