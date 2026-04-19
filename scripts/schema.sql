@@ -38,7 +38,8 @@ CREATE TABLE posisi (
 -- ============================================
 CREATE TABLE categories (
     id SERIAL PRIMARY KEY,
-    nama TEXT UNIQUE NOT NULL
+    nama TEXT UNIQUE NOT NULL,
+    grouping TEXT CHECK (grouping IN ('bentuk', 'konten', 'lain'))
 );
 
 -- ============================================
@@ -56,11 +57,40 @@ CREATE TABLE books (
     updated_at TIMESTAMP DEFAULT NOW()
 );
 
+-- ============================================
+-- BOOK_CATEGORIES TABLE (Multi-tagging)
+-- ============================================
+CREATE TABLE book_categories (
+    id BIGSERIAL PRIMARY KEY,
+    book_id INT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    category_id INT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(book_id, category_id)
+);
+
 -- Index for search
 CREATE INDEX idx_books_judul ON books USING GIN(to_tsvector('indonesian', judul));
 CREATE INDEX idx_books_kode ON books(kode);
 CREATE INDEX idx_books_kategori ON books(kategori_id);
 CREATE INDEX idx_books_posisi ON books(posisi_id);
+CREATE INDEX idx_book_categories_book ON book_categories(book_id);
+CREATE INDEX idx_book_categories_category ON book_categories(category_id);
+
+-- ============================================
+-- BOOK_STOCK_LOCATIONS TABLE (Split stok)
+-- ============================================
+CREATE TABLE book_stock_locations (
+    id BIGSERIAL PRIMARY KEY,
+    book_id INT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    posisi_id INT REFERENCES posisi(id) ON DELETE SET NULL,
+    qty INT NOT NULL DEFAULT 0 CHECK (qty >= 0),
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(book_id, posisi_id)
+);
+
+CREATE INDEX idx_book_stock_locations_book ON book_stock_locations(book_id);
+CREATE INDEX idx_book_stock_locations_posisi ON book_stock_locations(posisi_id);
 
 -- ============================================
 -- LOANS TABLE (Peminjaman)
@@ -78,6 +108,22 @@ CREATE TABLE loans (
 
 CREATE INDEX idx_loans_book ON loans(book_id);
 CREATE INDEX idx_loans_active ON loans(book_id) WHERE tanggal_kembali IS NULL;
+
+-- ============================================
+-- LOAN_STOCK_ALLOCATIONS TABLE
+-- ============================================
+CREATE TABLE loan_stock_allocations (
+    id BIGSERIAL PRIMARY KEY,
+    loan_id INT NOT NULL REFERENCES loans(id) ON DELETE CASCADE,
+    book_id INT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    posisi_id INT REFERENCES posisi(id) ON DELETE SET NULL,
+    qty INT NOT NULL DEFAULT 1 CHECK (qty > 0),
+    allocated_at TIMESTAMP DEFAULT NOW(),
+    returned_at TIMESTAMP NULL
+);
+
+CREATE INDEX idx_loan_stock_allocations_loan ON loan_stock_allocations(loan_id);
+CREATE INDEX idx_loan_stock_allocations_book_posisi_active ON loan_stock_allocations(book_id, posisi_id) WHERE returned_at IS NULL;
 
 -- ============================================
 -- LOGS TABLE (Activity Log)

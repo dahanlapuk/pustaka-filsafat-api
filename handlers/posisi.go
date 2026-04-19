@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"pustaka-filsafat/models"
+
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -17,14 +19,14 @@ func GetPosisi(c *fiber.Ctx) error {
 	defer rows.Close()
 
 	type Posisi struct {
-		ID          int     `json:"id"`
-		Kode        string  `json:"kode"`
-		Rak         string  `json:"rak"`
-		RakNo       int     `json:"rak_no"`
-		Baris       string  `json:"baris"`
-		KolomNo     *int    `json:"kolom_no"`
-		Letak       *string `json:"letak"`
-		Deskripsi   *string `json:"deskripsi"`
+		ID        int     `json:"id"`
+		Kode      string  `json:"kode"`
+		Rak       string  `json:"rak"`
+		RakNo     int     `json:"rak_no"`
+		Baris     string  `json:"baris"`
+		KolomNo   *int    `json:"kolom_no"`
+		Letak     *string `json:"letak"`
+		Deskripsi *string `json:"deskripsi"`
 	}
 
 	list := []Posisi{}
@@ -62,9 +64,9 @@ func GetPosisiStruktur(c *fiber.Ctx) error {
 	}
 
 	type RakGroup struct {
-		RakNo  int          `json:"rak_no"`
-		Nama   string       `json:"nama"`
-		Items  []PosisiItem `json:"items"`
+		RakNo int          `json:"rak_no"`
+		Nama  string       `json:"nama"`
+		Items []PosisiItem `json:"items"`
 	}
 
 	allItems := []PosisiItem{}
@@ -114,6 +116,16 @@ func UpdatePosisiBuku(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
+
+	var entityID *int
+	if input.PosisiID != nil {
+		entityID = input.PosisiID
+	}
+	bookName := "Book Position Update"
+	_ = LogActivity(DB, &input.AdminID, input.AdminNama, models.ActionPositionChange, models.EntityPosisi, entityID, &bookName, map[string]interface{}{
+		"book_id":   bookID,
+		"posisi_id": input.PosisiID,
+	})
 
 	return c.JSON(fiber.Map{"message": "Posisi buku berhasil diupdate", "book_id": bookID, "posisi_id": input.PosisiID})
 }

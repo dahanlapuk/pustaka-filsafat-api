@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"pustaka-filsafat/models"
 	"strconv"
 	"time"
@@ -173,7 +174,9 @@ func LoginAdmin(db *sql.DB) fiber.Handler {
 		// Verify password
 		if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(decodedPassword)); err != nil {
 			// Log failed attempt
-			LogActivity(db, &admin.ID, admin.Nama, "LOGIN_FAILED", models.EntityAdmin, &admin.ID, &admin.Nama, nil)
+			if logErr := LogActivity(db, &admin.ID, admin.Nama, "LOGIN_FAILED", models.EntityAdmin, &admin.ID, &admin.Nama, nil); logErr != nil {
+				log.Printf("[LoginAdmin] gagal mencatat LOGIN_FAILED: %v", logErr)
+			}
 			return c.Status(401).JSON(fiber.Map{"error": "Password salah"})
 		}
 
@@ -186,7 +189,9 @@ func LoginAdmin(db *sql.DB) fiber.Handler {
 		}
 
 		// Log successful login
-		LogActivity(db, &admin.ID, admin.Nama, models.ActionLogin, models.EntityAdmin, &admin.ID, &admin.Nama, nil)
+		if logErr := LogActivity(db, &admin.ID, admin.Nama, models.ActionLogin, models.EntityAdmin, &admin.ID, &admin.Nama, nil); logErr != nil {
+			log.Printf("[LoginAdmin] gagal mencatat LOGIN: %v", logErr)
+		}
 
 		issuedAt := time.Now().UTC()
 		expiresAt := issuedAt.Add(SessionExpiryDuration)
@@ -413,8 +418,8 @@ func ResetPasswordBySuper(db *sql.DB) fiber.Handler {
 		})
 
 		return c.JSON(fiber.Map{
-			"message": "Password admin berhasil direset",
-			"admin_id": targetIDInt,
+			"message":    "Password admin berhasil direset",
+			"admin_id":   targetIDInt,
 			"admin_nama": targetNama,
 		})
 	}
@@ -445,6 +450,9 @@ func CreateAdmin(db *sql.DB) fiber.Handler {
 		}
 		if input.Nama == "" || input.Password == "" {
 			return c.Status(400).JSON(fiber.Map{"error": "Nama dan password wajib diisi"})
+		}
+		if input.Email == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "Email wajib diisi"})
 		}
 
 		decodedPassword, _ := decodePassword(input.Password)
@@ -542,8 +550,24 @@ func UpdateAdminBySuper(db *sql.DB) fiber.Handler {
 			return c.Status(500).JSON(fiber.Map{"error": "Gagal mengambil data admin"})
 		}
 
-		LogActivity(db, &admin.ID, admin.Nama, "UPDATE_ADMIN", models.EntityAdmin, &updated.ID, &updated.Nama, fiber.Map{
-			"old_name": old.Nama,
+		action := "UPDATE_ADMIN"
+		if old.IsSuperadmin != updated.IsSuperadmin {
+			if updated.IsSuperadmin {
+				action = "PROMOTE_ADMIN"
+			} else {
+				action = "DEMOTE_ADMIN"
+			}
+		}
+
+		LogActivity(db, &admin.ID, admin.Nama, action, models.EntityAdmin, &updated.ID, &updated.Nama, fiber.Map{
+			"old_name":          old.Nama,
+			"new_name":          updated.Nama,
+			"old_nickname":      old.Nickname,
+			"new_nickname":      updated.Nickname,
+			"old_title":         old.Title,
+			"new_title":         updated.Title,
+			"old_is_superadmin": old.IsSuperadmin,
+			"new_is_superadmin": updated.IsSuperadmin,
 		})
 
 		return c.JSON(fiber.Map{
@@ -650,7 +674,9 @@ func LogoutAdmin(db *sql.DB) fiber.Handler {
 		if adminNama != "" {
 			entityName = adminNama
 		}
-		LogActivity(db, &adminID, adminNama, models.ActionLogout, models.EntityAdmin, &adminID, &entityName, nil)
+		if logErr := LogActivity(db, &adminID, adminNama, models.ActionLogout, models.EntityAdmin, &adminID, &entityName, nil); logErr != nil {
+			log.Printf("[LogoutAdmin] gagal mencatat LOGOUT: %v", logErr)
+		}
 
 		return c.JSON(fiber.Map{
 			"message": "Logout berhasil",

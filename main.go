@@ -22,6 +22,18 @@ func main() {
 	if err := handlers.EnsureAuthSessionSchema(DB); err != nil {
 		log.Fatal(err)
 	}
+	if err := handlers.EnsureActivityLogSchema(DB); err != nil {
+		log.Fatal(err)
+	}
+	if err := handlers.EnsureBookTagSchema(DB); err != nil {
+		log.Fatal(err)
+	}
+	if err := handlers.EnsureBookStockSchema(DB); err != nil {
+		log.Fatal(err)
+	}
+	if err := handlers.EnsureStocktakeSchema(DB); err != nil {
+		log.Fatal(err)
+	}
 
 	app := fiber.New(fiber.Config{
 		AppName: "Pustaka Filsafat API",

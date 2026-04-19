@@ -351,12 +351,25 @@ func ApproveDeleteRequest(c *fiber.Ctx) error {
 		return c.Status(409).JSON(fiber.Map{"error": "Pengajuan sudah diproses"})
 	}
 
-	tx, _ := DB.Begin()
-	tx.Exec(`UPDATE delete_requests SET status='approved', reviewed_by=$1, reviewed_at=NOW() WHERE id=$2`,
+	tx, err := DB.Begin()
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "Gagal memulai transaksi"})
+	}
+
+	_, err = tx.Exec(`UPDATE delete_requests SET status='approved', reviewed_by=$1, reviewed_at=NOW() WHERE id=$2`,
 		input.AdminID, id)
-	tx.Exec(`DELETE FROM books WHERE id = $1`, bookID)
-	if err := tx.Commit(); err != nil {
-		tx.Rollback()
+	if err != nil {
+		_ = tx.Rollback()
+		return c.Status(500).JSON(fiber.Map{"error": "Gagal mengupdate status pengajuan"})
+	}
+
+	_, err = tx.Exec(`DELETE FROM books WHERE id = $1`, bookID)
+	if err != nil {
+		_ = tx.Rollback()
+		return c.Status(500).JSON(fiber.Map{"error": "Gagal menghapus buku"})
+	}
+
+	if err = tx.Commit(); err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 

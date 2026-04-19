@@ -18,7 +18,10 @@ func SetupRoutes(app *fiber.App) {
 	api.Get("/books/search", handlers.SearchBooks)
 	api.Get("/books/no-code", handlers.GetBooksWithoutCode(DB))
 	api.Get("/books/:id", handlers.GetBook)
+	api.Get("/books/:id/stock-breakdown", handlers.GetBookStockBreakdown)
+	api.Get("/books/:id/stock-availability", handlers.GetBookStockAvailability)
 	api.Post("/books", handlers.CreateBook)
+	api.Put("/books/:id/stock-breakdown", handlers.UpdateBookStockBreakdown)
 	api.Put("/books/batch-posisi", handlers.BatchUpdatePosisi)
 	api.Put("/books/:id", handlers.UpdateBook)
 	api.Put("/books/:id/posisi", handlers.UpdatePosisiBuku)
@@ -43,6 +46,9 @@ func SetupRoutes(app *fiber.App) {
 
 	// ── Loans ────────────────────────────────────────────────
 	api.Get("/loans", handlers.GetLoans)
+	api.Get("/loans/:id", handlers.GetLoanDetail)
+	api.Get("/loans/audit/summary", handlers.GetLoanAuditSummary)
+	api.Get("/loans/audit/history", handlers.GetLoanAuditHistory)
 	api.Post("/loans", handlers.CreateLoan)
 	api.Put("/loans/:id/return", handlers.ReturnLoan)
 
@@ -62,6 +68,15 @@ func SetupRoutes(app *fiber.App) {
 	api.Get("/inventory/stats", handlers.GetInventoryStats)
 	api.Get("/inventory/posisi/:id", handlers.GetBooksByPosisi)
 	api.Post("/inventory/check", handlers.InventoryCheck)
+	api.Post("/inventory/transfer", handlers.TransferInventory)
+	api.Post("/inventory/stocktake/sessions", handlers.StartStocktakeSession)
+	api.Post("/inventory/stocktake/:id/entries", handlers.AddStocktakeEntry)
+	api.Get("/inventory/stocktake/:id", handlers.GetStocktakeSession)
+	api.Put("/inventory/stocktake/:id/close", handlers.CloseStocktakeSession)
+
+	// ── Members (Public Archive) ─────────────────────────────
+	api.Get("/members", handlers.GetMemberArchive)
+	api.Get("/members/:name", handlers.GetMemberProfile)
 
 	// ── Dashboard ────────────────────────────────────────────
 	api.Get("/dashboard/stats", handlers.GetDashboardStats)
@@ -84,4 +99,5 @@ func SetupRoutes(app *fiber.App) {
 	// ── Activity Logs ────────────────────────────────────────
 	api.Get("/logs", handlers.GetActivityLogs(DB))
 	api.Get("/logs/stats", handlers.GetLogStats(DB))
+	api.Post("/logs/debug-ping", handlers.DebugLogPing(DB))
 }

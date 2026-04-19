@@ -2,37 +2,64 @@ package handlers
 
 import (
 	"database/sql"
+	"pustaka-filsafat/models"
+	"strconv"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/lib/pq"
 )
 
 // GetCategories - GET /api/categories (public)
 func GetCategories(c *fiber.Ctx) error {
 	rows, err := DB.Query(`
-		SELECT c.id, c.nama, COUNT(b.id) AS book_count
+		SELECT c.id, c.nama, c.grouping, COUNT(b.id) AS book_count
 		FROM categories c
 		LEFT JOIN books b ON b.kategori_id = c.id
-		GROUP BY c.id, c.nama
+		GROUP BY c.id, c.nama, c.grouping
 		ORDER BY c.nama ASC
 	`)
+	useGrouping := true
+	if err != nil && isUndefinedColumnCategoryError(err) {
+		useGrouping = false
+		rows, err = DB.Query(`
+			SELECT c.id, c.nama, COUNT(b.id) AS book_count
+			FROM categories c
+			LEFT JOIN books b ON b.kategori_id = c.id
+			GROUP BY c.id, c.nama
+			ORDER BY c.nama ASC
+		`)
+	}
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "Gagal mengambil kategori"})
 	}
 	defer rows.Close()
 
 	type Category struct {
-		ID        int    `json:"id"`
-		Nama      string `json:"nama"`
-		BookCount int    `json:"book_count"`
+		ID        int     `json:"id"`
+		Nama      string  `json:"nama"`
+		Grouping  *string `json:"grouping,omitempty"`
+		BookCount int     `json:"book_count"`
 	}
 
 	list := []Category{}
 	for rows.Next() {
 		var cat Category
-		if err := rows.Scan(&cat.ID, &cat.Nama, &cat.BookCount); err != nil {
-			continue
+		if useGrouping {
+			if err := rows.Scan(&cat.ID, &cat.Nama, &cat.Grouping, &cat.BookCount); err != nil {
+				continue
+			}
+		} else {
+			if err := rows.Scan(&cat.ID, &cat.Nama, &cat.BookCount); err != nil {
+				continue
+			}
+		}
+		if !useGrouping {
+			cat.Grouping = nil
 		}
 		list = append(list, cat)
+	}
+	if err := rows.Err(); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "Gagal mengambil kategori"})
 	}
 	return c.JSON(list)
 }
@@ -41,6 +68,7 @@ func GetCategories(c *fiber.Ctx) error {
 func CreateCategory(c *fiber.Ctx) error {
 	var input struct {
 		Nama      string `json:"nama"`
+		Grouping  string `json:"grouping"`
 		AdminID   int    `json:"admin_id"`
 		AdminNama string `json:"admin_nama"`
 	}
@@ -50,6 +78,8 @@ func CreateCategory(c *fiber.Ctx) error {
 	if input.Nama == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "Nama kategori wajib diisi"})
 	}
+
+	normalizedGrouping := normalizeCategoryGrouping(input.Grouping)
 
 	var exists bool
 	_ = DB.QueryRow(`SELECT EXISTS(SELECT 1 FROM categories WHERE LOWER(nama) = LOWER($1))`,
@@ -59,12 +89,21 @@ func CreateCategory(c *fiber.Ctx) error {
 	}
 
 	var id int
-	err := DB.QueryRow(`INSERT INTO categories (nama) VALUES ($1) RETURNING id`, input.Nama).Scan(&id)
+	err := DB.QueryRow(`INSERT INTO categories (nama, grouping) VALUES ($1, NULLIF($2, '')) RETURNING id`, input.Nama, normalizedGrouping).Scan(&id)
+	if err != nil && isUndefinedColumnCategoryError(err) {
+		err = DB.QueryRow(`INSERT INTO categories (nama) VALUES ($1) RETURNING id`, input.Nama).Scan(&id)
+	}
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "Gagal membuat kategori"})
 	}
 
-	return c.Status(201).JSON(fiber.Map{"message": "Kategori berhasil dibuat", "id": id, "nama": input.Nama})
+	entityName := input.Nama
+	_ = LogActivity(DB, &input.AdminID, input.AdminNama, models.ActionCreate, models.EntityCategory, &id, &entityName, map[string]interface{}{
+		"nama":     input.Nama,
+		"grouping": normalizedGrouping,
+	})
+
+	return c.Status(201).JSON(fiber.Map{"message": "Kategori berhasil dibuat", "id": id, "nama": input.Nama, "grouping": normalizedGrouping})
 }
 
 // UpdateCategory - PUT /api/categories/:id
@@ -72,6 +111,7 @@ func UpdateCategory(c *fiber.Ctx) error {
 	categoryID := c.Params("id")
 	var input struct {
 		Nama      string `json:"nama"`
+		Grouping  string `json:"grouping"`
 		AdminID   int    `json:"admin_id"`
 		AdminNama string `json:"admin_nama"`
 	}
@@ -82,8 +122,17 @@ func UpdateCategory(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "Nama kategori wajib diisi"})
 	}
 
+	normalizedGrouping := normalizeCategoryGrouping(input.Grouping)
+
 	var oldNama string
-	err := DB.QueryRow(`SELECT nama FROM categories WHERE id = $1`, categoryID).Scan(&oldNama)
+	var oldGrouping sql.NullString
+	err := DB.QueryRow(`SELECT nama, grouping FROM categories WHERE id = $1`, categoryID).Scan(&oldNama, &oldGrouping)
+	useGrouping := true
+	if err != nil && isUndefinedColumnCategoryError(err) {
+		useGrouping = false
+		err = DB.QueryRow(`SELECT nama FROM categories WHERE id = $1`, categoryID).Scan(&oldNama)
+		oldGrouping = sql.NullString{}
+	}
 	if err == sql.ErrNoRows {
 		return c.Status(404).JSON(fiber.Map{"error": "Kategori tidak ditemukan"})
 	}
@@ -95,17 +144,53 @@ func UpdateCategory(c *fiber.Ctx) error {
 		return c.Status(409).JSON(fiber.Map{"error": "Nama kategori sudah dipakai"})
 	}
 
-	_, err = DB.Exec(`UPDATE categories SET nama = $1 WHERE id = $2`, input.Nama, categoryID)
+	if useGrouping {
+		_, err = DB.Exec(`UPDATE categories SET nama = $1, grouping = NULLIF($2, '') WHERE id = $3`, input.Nama, normalizedGrouping, categoryID)
+		if err != nil && isUndefinedColumnCategoryError(err) {
+			useGrouping = false
+			_, err = DB.Exec(`UPDATE categories SET nama = $1 WHERE id = $2`, input.Nama, categoryID)
+		}
+	} else {
+		_, err = DB.Exec(`UPDATE categories SET nama = $1 WHERE id = $2`, input.Nama, categoryID)
+	}
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "Gagal mengupdate kategori"})
 	}
 
-	return c.JSON(fiber.Map{"message": "Kategori diperbarui", "id": categoryID, "nama": input.Nama, "old_nama": oldNama})
+	entityName := input.Nama
+	_ = LogActivity(DB, &input.AdminID, input.AdminNama, "CATEGORY_UPDATE_REQUEST", models.EntityCategory, intPtr(categoryID), &entityName, map[string]interface{}{
+		"old_nama":     oldNama,
+		"new_nama":     input.Nama,
+		"old_grouping": oldGrouping.String,
+		"new_grouping": normalizedGrouping,
+		"category_id":  categoryID,
+	})
+
+	return c.JSON(fiber.Map{"message": "Kategori diperbarui", "id": categoryID, "nama": input.Nama, "grouping": normalizedGrouping, "old_nama": oldNama})
+}
+
+func isUndefinedColumnCategoryError(err error) bool {
+	pqErr, ok := err.(*pq.Error)
+	return ok && pqErr.Code == "42703"
+}
+
+func normalizeCategoryGrouping(grouping string) string {
+	switch grouping {
+	case "bentuk", "konten", "lain":
+		return grouping
+	default:
+		return ""
+	}
 }
 
 // DeleteCategory - DELETE /api/categories/:id (superadmin only)
 func DeleteCategory(c *fiber.Ctx) error {
 	categoryID := c.Params("id")
+	var input struct {
+		AdminID   int    `json:"admin_id"`
+		AdminNama string `json:"admin_nama"`
+	}
+	_ = c.BodyParser(&input)
 
 	var bookCount int
 	_ = DB.QueryRow(`SELECT COUNT(*) FROM books WHERE kategori_id = $1`, categoryID).Scan(&bookCount)
@@ -124,6 +209,11 @@ func DeleteCategory(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "Gagal menghapus kategori"})
 	}
+
+	_ = LogActivity(DB, &input.AdminID, input.AdminNama, "CATEGORY_DELETE_APPROVE", models.EntityCategory, intPtr(categoryID), &nama, map[string]interface{}{
+		"category_id": categoryID,
+		"nama":        nama,
+	})
 
 	return c.JSON(fiber.Map{"message": "Kategori berhasil dihapus", "nama": nama})
 }
@@ -155,6 +245,12 @@ func CreateCategoryRequest(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "Gagal mengajukan kategori"})
 	}
+
+	entityName := input.NamaRequested
+	_ = LogActivity(DB, &input.RequestedBy, input.RequestedByNama, "CATEGORY_REQUEST_CREATE", "CATEGORY_REQUEST", &id, &entityName, map[string]interface{}{
+		"nama_requested": input.NamaRequested,
+		"alasan":         input.Alasan,
+	})
 
 	return c.Status(201).JSON(fiber.Map{"message": "Pengajuan kategori berhasil dikirim", "id": id})
 }
@@ -236,6 +332,16 @@ func ApproveCategoryRequest(c *fiber.Ctx) error {
 		WHERE id = $3
 	`, input.AdminID, input.AdminNama, reqID)
 
+	entityName := nama
+	_ = LogActivity(DB, &input.AdminID, input.AdminNama, "CATEGORY_REQUEST_APPROVE", "CATEGORY_REQUEST", nil, &entityName, map[string]interface{}{
+		"request_id":  reqID,
+		"category_id": catID,
+		"nama":        nama,
+	})
+	_ = LogActivity(DB, &input.AdminID, input.AdminNama, "CATEGORY_CREATE_APPROVE", models.EntityCategory, &catID, &entityName, map[string]interface{}{
+		"request_id": reqID,
+	})
+
 	return c.JSON(fiber.Map{
 		"message":     "Pengajuan disetujui, kategori baru dibuat",
 		"category_id": catID,
@@ -271,5 +377,18 @@ func RejectCategoryRequest(c *fiber.Ctx) error {
 		WHERE id = $4
 	`, input.AdminID, input.AdminNama, input.CatatanReview, reqID)
 
+	_ = LogActivity(DB, &input.AdminID, input.AdminNama, "CATEGORY_REQUEST_REJECT", "CATEGORY_REQUEST", nil, nil, map[string]interface{}{
+		"request_id":     reqID,
+		"catatan_review": input.CatatanReview,
+	})
+
 	return c.JSON(fiber.Map{"message": "Pengajuan ditolak"})
+}
+
+func intPtr(s string) *int {
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return nil
+	}
+	return &v
 }

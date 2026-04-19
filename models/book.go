@@ -2,6 +2,11 @@ package models
 
 import "time"
 
+type BookTag struct {
+	ID   int    `json:"id"`
+	Nama string `json:"nama"`
+}
+
 type Book struct {
 	ID          int        `json:"id"`
 	Kode        *string    `json:"kode"`
@@ -16,22 +21,25 @@ type Book struct {
 	CheckedBy   *string    `json:"checked_by,omitempty"`
 
 	// Joined fields
-	KategoriNama *string `json:"kategori_nama,omitempty"`
-	PosisiKode   *string `json:"posisi_kode,omitempty"`
-	PosisiRak    *string `json:"posisi_rak,omitempty"`
-	IsDipinjam   bool    `json:"is_dipinjam"`
-	Peminjam     *string `json:"peminjam,omitempty"`
+	KategoriNama *string   `json:"kategori_nama,omitempty"`
+	PosisiKode   *string   `json:"posisi_kode,omitempty"`
+	PosisiRak    *string   `json:"posisi_rak,omitempty"`
+	IsDipinjam   bool      `json:"is_dipinjam"`
+	Peminjam     *string   `json:"peminjam,omitempty"`
+	Tags         []BookTag `json:"tags,omitempty"`
 }
 
 type BookInput struct {
-	Kode       *string `json:"kode"`
-	Judul      string  `json:"judul"`
-	KategoriID *int    `json:"kategori_id"`
-	PosisiID   *int    `json:"posisi_id"`
-	Qty        int     `json:"qty"`
-	Keterangan *string `json:"keterangan"`
-	AdminID    *int    `json:"admin_id"`   // ID admin yang melakukan aksi
-	AdminNama  string  `json:"admin_nama"` // Nama admin
+	Kode       *string  `json:"kode"`
+	Judul      string   `json:"judul"`
+	KategoriID *int     `json:"kategori_id"`
+	TagIDs     []int    `json:"tag_ids"`
+	TagNames   []string `json:"tag_names"`
+	PosisiID   *int     `json:"posisi_id"`
+	Qty        int      `json:"qty"`
+	Keterangan *string  `json:"keterangan"`
+	AdminID    *int     `json:"admin_id"`   // ID admin yang melakukan aksi
+	AdminNama  string   `json:"admin_nama"` // Nama admin
 }
 
 // InventoryCheckInput - untuk fitur absen buku
