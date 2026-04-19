@@ -1,10 +1,13 @@
 # Binary
 server
+app
+pustaka-filsafat
 *.exe
 
 # Environment
 .env
 .env.local
+.env.save
 
 # Logs
 nohup.out
@@ -20,3 +23,6 @@ coverage.out
 
 # Scripts with sensitive data
 scripts/set_passwords.go
+
+# Accidental scratch files
+n:=os.Getenv("DATABASE_URL")
