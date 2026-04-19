@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"pustaka-filsafat/models"
 	"time"
@@ -31,6 +32,25 @@ func generateSessionToken() (string, error) {
 func hashSessionToken(rawToken string) string {
 	sum := sha256.Sum256([]byte(rawToken))
 	return hex.EncodeToString(sum[:])
+}
+
+func getSessionAdmin(db *sql.DB, c *fiber.Ctx) (*models.Admin, error) {
+	adminIDVal := c.Locals("adminID")
+	adminID, ok := adminIDVal.(int)
+	if !ok || adminID == 0 {
+		return nil, errors.New("Session admin tidak valid")
+	}
+
+	var admin models.Admin
+	err := db.QueryRow(`
+		SELECT id, nama, nickname, email, role, title, is_superadmin, password_changed_at, created_at
+		FROM admins WHERE id = $1
+	`, adminID).Scan(&admin.ID, &admin.Nama, &admin.Nickname, &admin.Email, &admin.Role, &admin.Title, &admin.IsSuperadmin, &admin.PasswordChangedAt, &admin.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+
+	return &admin, nil
 }
 
 // decodePassword - decode Base64 encoded password from frontend
@@ -318,6 +338,187 @@ func ChangePassword(db *sql.DB) fiber.Handler {
 
 		return c.JSON(fiber.Map{
 			"message": "Password berhasil diubah",
+		})
+	}
+}
+
+// CreateAdmin - create new admin (superadmin only)
+func CreateAdmin(db *sql.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		admin, err := getSessionAdmin(db, c)
+		if err != nil {
+			return c.Status(401).JSON(fiber.Map{"error": "Session admin tidak valid"})
+		}
+		if !admin.IsSuperadmin {
+			return c.Status(403).JSON(fiber.Map{"error": "Hanya superadmin yang bisa menambah admin"})
+		}
+
+		var input struct {
+			Nama      string `json:"nama"`
+			Nickname  string `json:"nickname"`
+			Email     string `json:"email"`
+			Title     string `json:"title"`
+			Password  string `json:"password"`
+			IsSuper   bool   `json:"is_superadmin"`
+			CreatedBy int    `json:"created_by_id"`
+		}
+		if err := c.BodyParser(&input); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "Input tidak valid"})
+		}
+		if input.Nama == "" || input.Password == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "Nama dan password wajib diisi"})
+		}
+
+		decodedPassword, _ := decodePassword(input.Password)
+		if len(decodedPassword) < 6 {
+			return c.Status(400).JSON(fiber.Map{"error": "Password minimal 6 karakter"})
+		}
+
+		passwordHash, err := bcrypt.GenerateFromPassword([]byte(decodedPassword), bcrypt.DefaultCost)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Gagal memproses password"})
+		}
+
+		var exists bool
+		_ = db.QueryRow(`SELECT EXISTS(SELECT 1 FROM admins WHERE LOWER(nama) = LOWER($1))`, input.Nama).Scan(&exists)
+		if exists {
+			return c.Status(409).JSON(fiber.Map{"error": "Nama admin sudah dipakai"})
+		}
+
+		var created models.Admin
+		err = db.QueryRow(`
+			INSERT INTO admins (nama, nickname, email, title, password_hash, role, is_superadmin, password_changed_at)
+			VALUES ($1, NULLIF($2, ''), $3, NULLIF($4, ''), $5, 'admin', $6, NOW())
+			RETURNING id, nama, nickname, email, role, title, is_superadmin, password_changed_at, created_at
+		`, input.Nama, input.Nickname, input.Email, input.Title, string(passwordHash), input.IsSuper).Scan(
+			&created.ID, &created.Nama, &created.Nickname, &created.Email, &created.Role, &created.Title, &created.IsSuperadmin, &created.PasswordChangedAt, &created.CreatedAt,
+		)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Gagal membuat admin"})
+		}
+
+		LogActivity(db, &admin.ID, admin.Nama, "CREATE_ADMIN", models.EntityAdmin, &created.ID, &created.Nama, fiber.Map{
+			"created_by": admin.Nama,
+		})
+
+		return c.Status(201).JSON(fiber.Map{
+			"message": "Admin berhasil dibuat",
+			"admin":   created,
+		})
+	}
+}
+
+// UpdateAdminBySuper - update admin data (superadmin only)
+func UpdateAdminBySuper(db *sql.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		admin, err := getSessionAdmin(db, c)
+		if err != nil {
+			return c.Status(401).JSON(fiber.Map{"error": "Session admin tidak valid"})
+		}
+		if !admin.IsSuperadmin {
+			return c.Status(403).JSON(fiber.Map{"error": "Hanya superadmin yang bisa mengubah admin"})
+		}
+
+		targetID := c.Params("id")
+		var input struct {
+			Nama     string `json:"nama"`
+			Nickname string `json:"nickname"`
+			Email    string `json:"email"`
+			Title    string `json:"title"`
+			IsSuper  bool   `json:"is_superadmin"`
+		}
+		if err := c.BodyParser(&input); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "Input tidak valid"})
+		}
+		if input.Nama == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "Nama wajib diisi"})
+		}
+
+		var old models.Admin
+		err = db.QueryRow(`
+			SELECT id, nama, nickname, email, role, title, is_superadmin, password_changed_at, created_at
+			FROM admins WHERE id = $1
+		`, targetID).Scan(&old.ID, &old.Nama, &old.Nickname, &old.Email, &old.Role, &old.Title, &old.IsSuperadmin, &old.PasswordChangedAt, &old.CreatedAt)
+		if err == sql.ErrNoRows {
+			return c.Status(404).JSON(fiber.Map{"error": "Admin tidak ditemukan"})
+		}
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Gagal mengambil data admin"})
+		}
+
+		_, err = db.Exec(`
+			UPDATE admins
+			SET nama = $1, nickname = NULLIF($2, ''), email = $3, title = NULLIF($4, ''), is_superadmin = $5
+			WHERE id = $6
+		`, input.Nama, input.Nickname, input.Email, input.Title, input.IsSuper, targetID)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Gagal mengubah admin"})
+		}
+
+		var updated models.Admin
+		err = db.QueryRow(`
+			SELECT id, nama, nickname, email, role, title, is_superadmin, password_changed_at, created_at
+			FROM admins WHERE id = $1
+		`, targetID).Scan(&updated.ID, &updated.Nama, &updated.Nickname, &updated.Email, &updated.Role, &updated.Title, &updated.IsSuperadmin, &updated.PasswordChangedAt, &updated.CreatedAt)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Gagal mengambil data admin"})
+		}
+
+		LogActivity(db, &admin.ID, admin.Nama, "UPDATE_ADMIN", models.EntityAdmin, &updated.ID, &updated.Nama, fiber.Map{
+			"old_name": old.Nama,
+		})
+
+		return c.JSON(fiber.Map{
+			"message": "Admin berhasil diperbarui",
+			"admin":   updated,
+		})
+	}
+}
+
+// DeleteAdmin - delete admin (superadmin only)
+func DeleteAdmin(db *sql.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		admin, err := getSessionAdmin(db, c)
+		if err != nil {
+			return c.Status(401).JSON(fiber.Map{"error": "Session admin tidak valid"})
+		}
+		if !admin.IsSuperadmin {
+			return c.Status(403).JSON(fiber.Map{"error": "Hanya superadmin yang bisa menghapus admin"})
+		}
+
+		targetID := c.Params("id")
+		if targetID == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "ID admin diperlukan"})
+		}
+		if targetID == fmt.Sprintf("%d", admin.ID) {
+			return c.Status(400).JSON(fiber.Map{"error": "Tidak bisa menghapus akun sendiri"})
+		}
+
+		var target models.Admin
+		err = db.QueryRow(`
+			SELECT id, nama, nickname, email, role, title, is_superadmin, password_changed_at, created_at
+			FROM admins WHERE id = $1
+		`, targetID).Scan(&target.ID, &target.Nama, &target.Nickname, &target.Email, &target.Role, &target.Title, &target.IsSuperadmin, &target.PasswordChangedAt, &target.CreatedAt)
+		if err == sql.ErrNoRows {
+			return c.Status(404).JSON(fiber.Map{"error": "Admin tidak ditemukan"})
+		}
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Gagal mengambil data admin"})
+		}
+		if target.IsSuperadmin {
+			return c.Status(403).JSON(fiber.Map{"error": "Tidak bisa menghapus superadmin"})
+		}
+
+		_, err = db.Exec(`DELETE FROM admins WHERE id = $1`, targetID)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Gagal menghapus admin"})
+		}
+
+		LogActivity(db, &admin.ID, admin.Nama, "DELETE_ADMIN", models.EntityAdmin, &target.ID, &target.Nama, nil)
+
+		return c.JSON(fiber.Map{
+			"message": "Admin berhasil dihapus",
+			"admin":   fiber.Map{"id": target.ID, "nama": target.Nama},
 		})
 	}
 }
