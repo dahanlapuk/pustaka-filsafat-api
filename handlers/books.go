@@ -24,6 +24,7 @@ func GetBooks(c *fiber.Ctx) error {
 	tagID := c.Query("tag_id")
 	posisiID := c.Query("posisi_id")
 	status := c.Query("status")
+	unpositioned := c.Query("unpositioned") // Filter: "true" untuk hanya buku tanpa posisi
 
 	// Pagination
 	page := c.QueryInt("page", 1)
@@ -58,6 +59,11 @@ func GetBooks(c *fiber.Ctx) error {
 		args = append(args, posisiID)
 		argIdx++
 	}
+	if unpositioned == "true" {
+		baseWhere += " AND b.posisi_id IS NULL"
+	} else if unpositioned == "false" {
+		baseWhere += " AND b.posisi_id IS NOT NULL"
+	}
 	if status == "dipinjam" {
 		baseWhere += " AND l.id IS NOT NULL"
 	} else if status == "tersedia" {
@@ -81,6 +87,7 @@ func GetBooks(c *fiber.Ctx) error {
 	dataQuery := `
 		SELECT
 			b.id, b.kode, b.judul, b.kategori_id, b.posisi_id, b.qty, b.keterangan, b.created_at, b.updated_at,
+			b.tahun, b.penulis,
 			c.nama as kategori_nama,
 			p.kode as posisi_kode, p.rak as posisi_rak,
 			CASE WHEN l.id IS NOT NULL THEN true ELSE false END as is_dipinjam,
@@ -112,6 +119,7 @@ func GetBooks(c *fiber.Ctx) error {
 		var tagsRaw []byte
 		if err := rows.Scan(
 			&b.ID, &b.Kode, &b.Judul, &b.KategoriID, &b.PosisiID, &b.Qty, &b.Keterangan, &b.CreatedAt, &b.UpdatedAt,
+			&b.Tahun, &b.Penulis,
 			&b.KategoriNama, &b.PosisiKode, &b.PosisiRak, &b.IsDipinjam, &b.Peminjam, &tagsRaw,
 		); err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
@@ -202,6 +210,7 @@ func SearchBooks(c *fiber.Ctx) error {
 	dataQuery := `
 		SELECT
 			b.id, b.kode, b.judul, b.kategori_id, b.posisi_id, b.qty, b.keterangan, b.created_at, b.updated_at,
+			b.tahun, b.penulis,
 			c.nama as kategori_nama,
 			p.kode as posisi_kode, p.rak as posisi_rak,
 			CASE WHEN l.id IS NOT NULL THEN true ELSE false END as is_dipinjam,
@@ -233,6 +242,7 @@ func SearchBooks(c *fiber.Ctx) error {
 		var tagsRaw []byte
 		if err := rows.Scan(
 			&b.ID, &b.Kode, &b.Judul, &b.KategoriID, &b.PosisiID, &b.Qty, &b.Keterangan, &b.CreatedAt, &b.UpdatedAt,
+			&b.Tahun, &b.Penulis,
 			&b.KategoriNama, &b.PosisiKode, &b.PosisiRak, &b.IsDipinjam, &b.Peminjam, &tagsRaw,
 		); err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
@@ -261,6 +271,7 @@ func GetBook(c *fiber.Ctx) error {
 	queryWithTags := `
 		SELECT 
 			b.id, b.kode, b.judul, b.kategori_id, b.posisi_id, b.qty, b.keterangan, b.created_at, b.updated_at,
+			b.tahun, b.penulis,
 			c.nama as kategori_nama,
 			p.kode as posisi_kode, p.rak as posisi_rak,
 			CASE WHEN l.id IS NOT NULL THEN true ELSE false END as is_dipinjam,
@@ -282,6 +293,7 @@ func GetBook(c *fiber.Ctx) error {
 	fallbackQuery := `
 		SELECT 
 			b.id, b.kode, b.judul, b.kategori_id, b.posisi_id, b.qty, b.keterangan, b.created_at, b.updated_at,
+			b.tahun, b.penulis,
 			c.nama as kategori_nama,
 			p.kode as posisi_kode, p.rak as posisi_rak,
 			CASE WHEN l.id IS NOT NULL THEN true ELSE false END as is_dipinjam,
@@ -297,11 +309,13 @@ func GetBook(c *fiber.Ctx) error {
 	var tagsRaw []byte
 	err := DB.QueryRow(queryWithTags, id).Scan(
 		&b.ID, &b.Kode, &b.Judul, &b.KategoriID, &b.PosisiID, &b.Qty, &b.Keterangan, &b.CreatedAt, &b.UpdatedAt,
+		&b.Tahun, &b.Penulis,
 		&b.KategoriNama, &b.PosisiKode, &b.PosisiRak, &b.IsDipinjam, &b.Peminjam, &tagsRaw,
 	)
 	if err != nil && isUndefinedTableError(err) {
 		err = DB.QueryRow(fallbackQuery, id).Scan(
 			&b.ID, &b.Kode, &b.Judul, &b.KategoriID, &b.PosisiID, &b.Qty, &b.Keterangan, &b.CreatedAt, &b.UpdatedAt,
+			&b.Tahun, &b.Penulis,
 			&b.KategoriNama, &b.PosisiKode, &b.PosisiRak, &b.IsDipinjam, &b.Peminjam,
 		)
 		tagsRaw = nil
@@ -587,6 +601,7 @@ func GetBooksByPosisi(c *fiber.Ctx) error {
 		SELECT 
 			b.id, b.kode, b.judul, b.kategori_id, b.posisi_id, b.qty, b.keterangan, 
 			b.created_at, b.updated_at, b.last_checked, b.checked_by,
+			b.tahun, b.penulis,
 			c.nama as kategori_nama,
 			p.kode as posisi_kode, p.rak as posisi_rak,
 			CASE WHEN l.id IS NOT NULL THEN true ELSE false END as is_dipinjam,
@@ -611,6 +626,7 @@ func GetBooksByPosisi(c *fiber.Ctx) error {
 		err := rows.Scan(
 			&b.ID, &b.Kode, &b.Judul, &b.KategoriID, &b.PosisiID, &b.Qty, &b.Keterangan,
 			&b.CreatedAt, &b.UpdatedAt, &b.LastChecked, &b.CheckedBy,
+			&b.Tahun, &b.Penulis,
 			&b.KategoriNama, &b.PosisiKode, &b.PosisiRak, &b.IsDipinjam, &b.Peminjam,
 		)
 		if err != nil {

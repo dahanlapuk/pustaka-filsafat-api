@@ -15,6 +15,8 @@ type Book struct {
 	PosisiID    *int       `json:"posisi_id"`
 	Qty         int        `json:"qty"`
 	Keterangan  *string    `json:"keterangan"`
+	Tahun       *int       `json:"tahun,omitempty"`   // Tahun publikasi/penyusunan
+	Penulis     *string    `json:"penulis,omitempty"` // Nama penulis
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 	LastChecked *time.Time `json:"last_checked,omitempty"`
@@ -38,6 +40,8 @@ type BookInput struct {
 	PosisiID   *int     `json:"posisi_id"`
 	Qty        int      `json:"qty"`
 	Keterangan *string  `json:"keterangan"`
+	Tahun      *int     `json:"tahun"`      // Tahun publikasi/penyusunan
+	Penulis    *string  `json:"penulis"`    // Nama penulis
 	AdminID    *int     `json:"admin_id"`   // ID admin yang melakukan aksi
 	AdminNama  string   `json:"admin_nama"` // Nama admin
 }
